@@ -25,7 +25,7 @@ class Agent:
         *,
         tools: ToolRegistry | None = None,
         system_prompt: str = "You are a helpful personal assistant.",
-        max_model_turns: int = 8,
+        max_model_turns: int = 16,
         on_event: EventHandler | None = None,
     ) -> None:
         if max_model_turns < 1:

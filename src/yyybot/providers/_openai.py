@@ -88,18 +88,23 @@ def create_client(
     base_url: str,
     timeout: float,
     extra_headers: Mapping[str, str] | None,
+    trust_env: bool = True,
 ) -> Any:
     try:
-        from openai import AsyncOpenAI
+        from openai import AsyncOpenAI, DefaultAsyncHttpxClient
     except ImportError as exc:
         raise ProviderError(
             "OpenAI SDK is not installed; run `pip install -e '.[openai]'`"
         ) from exc
+    client_options: dict[str, Any] = {}
+    if not trust_env:
+        client_options["http_client"] = DefaultAsyncHttpxClient(trust_env=False)
     return AsyncOpenAI(
         api_key=api_key,
         base_url=base_url,
         timeout=timeout,
         default_headers=extra_headers,
+        **client_options,
     )
 
 

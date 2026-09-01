@@ -12,13 +12,16 @@ from .contracts import (
 )
 from .models import Model
 from .providers import Provider
+from .terminal import bash
 from .tools import Tool, ToolRegistry
+from .web import web_fetch, web_search
 
 __all__ = [
     "Agent",
     "AgentEvent",
     "AgentLimitError",
     "AgentResult",
+    "bash",
     "GenerationOptions",
     "Message",
     "Model",
@@ -28,4 +31,6 @@ __all__ = [
     "ToolCall",
     "ToolRegistry",
     "ToolSpec",
+    "web_fetch",
+    "web_search",
 ]

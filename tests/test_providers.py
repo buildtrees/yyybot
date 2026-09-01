@@ -106,6 +106,23 @@ def test_ollama_and_vllm_are_platforms_using_openai_compatible_clients():
     assert vllm.provider.platform == "vllm"
 
 
+def test_local_providers_ignore_system_proxy_by_default(monkeypatch):
+    calls = []
+    fake_client, _ = openai_client({})
+
+    def fake_create_client(**options):
+        calls.append(options)
+        return fake_client
+
+    monkeypatch.setattr("yyybot.providers.ollama.create_client", fake_create_client)
+    monkeypatch.setattr("yyybot.providers.vllm.create_client", fake_create_client)
+
+    OllamaProvider()
+    VLLMProvider()
+
+    assert [call["trust_env"] for call in calls] == [False, False]
+
+
 def test_anthropic_provider_uses_messages_sdk_shape():
     client, endpoint = anthropic_client(
         {

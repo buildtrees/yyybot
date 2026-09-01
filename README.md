@@ -19,6 +19,8 @@ Agent ───────► Model ───────► 平台 Provider �
 - **工具即函数**：同步和异步函数都能注册，可自动生成基础 JSON Schema，也允许显式传入完整 Schema。
 - **UI 不侵入核心**：`AgentEvent` 可直接桥接日志、SSE 或 WebSocket。
 - **依赖按平台安装**：核心零依赖；OpenAI-compatible 和 Anthropic SDK 作为可选依赖。
+- **内置网络工具**：CLI 注册 Google 优先、DuckDuckGo 自动回退的 `web_search`，并通过 `web_fetch` 安全读取搜索结果正文。
+- **内置 Bash 工具**：CLI 注册非交互式 `bash`，提供超时、进程组终止和输出截断；仅应在可信环境中启用。
 
 ## 快速开始
 
@@ -29,6 +31,8 @@ export YYYBOT_API_KEY=your-key
 yyybot "请计算 12.5 + 7.5"
 ```
 
+网络搜索由 `.[all]` 一并安装；只需搜索功能时可安装 `.[web]`。如需为搜索单独设置代理，使用 `YYYBOT_WEB_PROXY`。
+
 兼容服务可额外设置：
 
 ```bash
@@ -38,6 +42,9 @@ export YYYBOT_PROVIDER=ollama
 
 本地服务不要求 `YYYBOT_API_KEY`。更完整的边界与时序见
 [`docs/architecture.md`](docs/architecture.md)。
+
+`OllamaProvider` 和 `VLLMProvider` 默认不读取系统代理，避免本机请求被
+`HTTP_PROXY` / `ALL_PROXY` 转发；连接远程部署时可显式设置 `trust_env=True`。
 
 ## 作为库使用
 

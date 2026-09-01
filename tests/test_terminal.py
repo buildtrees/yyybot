@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+import asyncio
+import json
+
+from yyybot import ToolRegistry, bash
+
+
+def test_bash_returns_stdout_stderr_and_exit_code():
+    result = json.loads(
+        asyncio.run(
+            bash(
+                "printf 'hello'; printf 'warning' >&2; exit 7",
+            )
+        )
+    )
+
+    assert result["exit_code"] == 7
+    assert result["timed_out"] is False
+    assert result["stdout"] == "hello"
+    assert result["stderr"] == "warning"
+
+
+def test_bash_times_out_and_kills_process_group():
+    result = json.loads(asyncio.run(bash("sleep 5", timeout=1)))
+
+    assert result["exit_code"] == -9
+    assert result["timed_out"] is True
+
+
+def test_bash_registers_with_expected_schema():
+    registry = ToolRegistry()
+
+    tool = registry.add(bash)
+
+    assert tool.spec.name == "bash"
+    assert tool.spec.parameters == {
+        "type": "object",
+        "properties": {
+            "command": {"type": "string"},
+            "timeout": {"type": "integer"},
+        },
+        "required": ["command"],
+    }

@@ -20,12 +20,14 @@ class OllamaProvider(Provider):
         client: Any | None = None,
         timeout: float = 60.0,
         extra_headers: Mapping[str, str] | None = None,
+        trust_env: bool = False,
     ) -> None:
         self.client = client or create_client(
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,
             extra_headers=extra_headers,
+            trust_env=trust_env,
         )
         self.base_url = base_url
 

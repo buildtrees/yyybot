@@ -16,7 +16,9 @@ if __package__:
         Provider,
         VLLMProvider,
     )
+    from .terminal import bash
     from .tools import ToolRegistry
+    from .web import web_fetch, web_search
 else:
     # Support `python src/yyybot/cli.py ...` in addition to `python -m yyybot.cli`.
     import sys
@@ -32,7 +34,9 @@ else:
         Provider,
         VLLMProvider,
     )
+    from yyybot.terminal import bash
     from yyybot.tools import ToolRegistry
+    from yyybot.web import web_fetch, web_search
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,6 +78,9 @@ async def _run(args: argparse.Namespace) -> None:
         return a + b
 
     tools.add(add)
+    tools.add(web_search)
+    tools.add(web_fetch)
+    tools.add(bash)
     provider = build_provider(args)
     model = Model(model_id=args.model, provider=provider)
     result = await Agent(model, tools=tools).run(args.prompt)
