@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import Any
 
-from ..contracts import GenerationOptions, Message, ModelResponse, ToolSpec
-from ._anthropic import create_client, decode_response, request_payload
+from ..contracts import (
+    GenerationOptions,
+    Message,
+    ModelResponse,
+    ModelStreamEvent,
+    ToolSpec,
+)
+from ._anthropic import (
+    create_client,
+    decode_response,
+    request_payload,
+    stream_with_client,
+)
 from .base import Provider, ProviderError
 
 
@@ -51,3 +63,27 @@ class AnthropicProvider(Provider):
             return decode_response(response)
         except Exception as exc:
             raise ProviderError(f"anthropic request failed: {exc}") from exc
+
+    async def stream(
+        self,
+        *,
+        model_id: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+        options: GenerationOptions | None = None,
+    ) -> AsyncIterator[ModelStreamEvent]:
+        request = request_payload(
+            model_id=model_id,
+            messages=messages,
+            tools=tools,
+            options=options or GenerationOptions(),
+            default_max_tokens=self.default_max_tokens,
+        )
+        try:
+            async for event in stream_with_client(
+                client=self.client,
+                request=request,
+            ):
+                yield event
+        except Exception as exc:
+            raise ProviderError(f"anthropic streaming request failed: {exc}") from exc

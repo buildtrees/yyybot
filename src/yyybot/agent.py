@@ -9,7 +9,7 @@ from typing import Any
 
 from .models import Model
 from .tools import ToolError, ToolRegistry
-from .contracts import AgentEvent, AgentResult, Message
+from .contracts import AgentEvent, AgentResult, Message, ModelResponse
 
 EventHandler = Callable[[AgentEvent], None | Awaitable[None]]
 
@@ -24,7 +24,6 @@ class Agent:
         model: Model,
         *,
         tools: ToolRegistry | None = None,
-        system_prompt: str = "You are a helpful personal assistant.",
         max_model_turns: int = 16,
         on_event: EventHandler | None = None,
     ) -> None:
@@ -32,7 +31,6 @@ class Agent:
             raise ValueError("max_model_turns must be positive")
         self.model = model
         self.tools = tools or ToolRegistry()
-        self.system_prompt = system_prompt
         self.max_model_turns = max_model_turns
         self.on_event = on_event
 
@@ -51,31 +49,63 @@ class Agent:
 
     async def run(
         self,
-        prompt: str,
-        *,
-        history: Sequence[Message] = (),
+        messages: Sequence[Message],
     ) -> AgentResult:
-        messages: list[Message] = list(history)
-        if self.system_prompt and not any(m.role == "system" for m in messages):
-            messages.insert(0, Message(role="system", content=self.system_prompt))
-        messages.append(Message(role="user", content=prompt))
+        working_messages = list(messages)
+        if not all(isinstance(message, Message) for message in working_messages):
+            raise TypeError("messages must contain only Message instances")
+        responses: list[ModelResponse] = []
 
         for turn in range(1, self.max_model_turns + 1):
             await self._emit(AgentEvent("model_start", {"turn": turn}))
-            response = await self.model.complete(messages, self.tools.specs)
+            if self.on_event is None:
+                response = await self.model.complete(working_messages, self.tools.specs)
+            else:
+                response = None
+                async for event in self.model.stream(
+                    working_messages, self.tools.specs
+                ):
+                    if event.delta is not None:
+                        await self._emit(
+                            AgentEvent(
+                                "model_delta",
+                                {
+                                    "turn": turn,
+                                    "content": event.delta.content,
+                                    "reasoning_content": (
+                                        event.delta.reasoning_content
+                                    ),
+                                },
+                            )
+                        )
+                    else:
+                        response = event.response
+                if response is None:
+                    raise RuntimeError(
+                        "Provider stream ended without a completed response"
+                    )
             assistant = response.message
             if assistant.role != "assistant":
                 raise TypeError("A model response must contain an assistant message")
-            messages.append(assistant)
+            responses.append(response)
+            working_messages.append(assistant)
             await self._emit(
                 AgentEvent(
                     "model_end",
-                    {"turn": turn, "finish_reason": response.finish_reason},
+                    {
+                        "turn": turn,
+                        "finish_reason": response.finish_reason,
+                        "usage": dict(response.usage),
+                    },
                 )
             )
 
             if not assistant.tool_calls:
-                return AgentResult(assistant.content, tuple(messages), turn)
+                return AgentResult(
+                    final_message=assistant,
+                    messages=tuple(working_messages),
+                    responses=tuple(responses),
+                )
 
             for call in assistant.tool_calls:
                 await self._emit(
@@ -86,7 +116,7 @@ class Agent:
                     content = self._tool_content({"ok": True, "result": value})
                 except ToolError as exc:
                     content = self._tool_content({"ok": False, "error": str(exc)})
-                messages.append(
+                working_messages.append(
                     Message(role="tool", content=content, tool_call_id=call.id)
                 )
                 await self._emit(

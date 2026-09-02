@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import Any
 
-from ..contracts import GenerationOptions, Message, ModelResponse, ToolCall, ToolSpec
+from ..contracts import (
+    GenerationOptions,
+    Message,
+    ModelDelta,
+    ModelResponse,
+    ModelStreamEvent,
+    ToolCall,
+    ToolSpec,
+)
 from .base import ProviderError
 
 
@@ -76,10 +85,41 @@ def _decode_response(response: Any) -> ModelResponse:
             role="assistant",
             content=raw_message.get("content") or "",
             tool_calls=tuple(calls),
+            reasoning_content=_reasoning_text(raw_message),
         ),
         choice.get("finish_reason"),
         usage,
     )
+
+
+def _reasoning_text(payload: Mapping[str, Any]) -> str:
+    for key in ("reasoning_content", "reasoning", "thinking"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _request_payload(
+    *,
+    model_id: str,
+    messages: Sequence[Message],
+    tools: Sequence[ToolSpec],
+    options: GenerationOptions | None,
+) -> dict[str, Any]:
+    generation = options or GenerationOptions()
+    request: dict[str, Any] = {
+        **generation.extra,
+        "model": model_id,
+        "messages": [_message_payload(message) for message in messages],
+    }
+    if tools:
+        request["tools"] = [_tool_payload(tool) for tool in tools]
+    if generation.temperature is not None:
+        request["temperature"] = generation.temperature
+    if generation.max_tokens is not None:
+        request["max_tokens"] = generation.max_tokens
+    return request
 
 
 def create_client(
@@ -117,20 +157,108 @@ async def complete_with_client(
     tools: Sequence[ToolSpec],
     options: GenerationOptions | None,
 ) -> ModelResponse:
-    generation = options or GenerationOptions()
-    request: dict[str, Any] = {
-        **generation.extra,
-        "model": model_id,
-        "messages": [_message_payload(message) for message in messages],
-    }
-    if tools:
-        request["tools"] = [_tool_payload(tool) for tool in tools]
-    if generation.temperature is not None:
-        request["temperature"] = generation.temperature
-    if generation.max_tokens is not None:
-        request["max_tokens"] = generation.max_tokens
+    request = _request_payload(
+        model_id=model_id,
+        messages=messages,
+        tools=tools,
+        options=options,
+    )
     try:
         response = await client.chat.completions.create(**request)
         return _decode_response(response)
     except Exception as exc:
         raise ProviderError(f"{platform} request failed: {exc}") from exc
+
+
+async def stream_with_client(
+    *,
+    client: Any,
+    platform: str,
+    model_id: str,
+    messages: Sequence[Message],
+    tools: Sequence[ToolSpec],
+    options: GenerationOptions | None,
+) -> AsyncIterator[ModelStreamEvent]:
+    request = _request_payload(
+        model_id=model_id,
+        messages=messages,
+        tools=tools,
+        options=options,
+    )
+    request["stream"] = True
+    request.setdefault("stream_options", {"include_usage": True})
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    tool_parts: dict[int, dict[str, str]] = {}
+    finish_reason: str | None = None
+    usage: dict[str, int] = {}
+    try:
+        stream = await client.chat.completions.create(**request)
+        async with stream:
+            async for chunk in stream:
+                payload = _as_mapping(chunk)
+                usage.update(
+                    {
+                        key: int(value)
+                        for key, value in (payload.get("usage") or {}).items()
+                        if isinstance(value, int)
+                    }
+                )
+                choices = payload.get("choices") or ()
+                if not choices:
+                    continue
+                choice = choices[0]
+                if choice.get("finish_reason") is not None:
+                    finish_reason = choice["finish_reason"]
+                delta = choice.get("delta") or {}
+                content = delta.get("content") or ""
+                reasoning = _reasoning_text(delta)
+                if content:
+                    content_parts.append(content)
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                if content or reasoning:
+                    yield ModelStreamEvent(
+                        delta=ModelDelta(
+                            content=content,
+                            reasoning_content=reasoning,
+                        )
+                    )
+                for raw_call in delta.get("tool_calls") or ():
+                    index = int(raw_call.get("index", 0))
+                    part = tool_parts.setdefault(
+                        index,
+                        {"id": "", "name": "", "arguments": ""},
+                    )
+                    if raw_call.get("id"):
+                        part["id"] = raw_call["id"]
+                    function = raw_call.get("function") or {}
+                    part["name"] += function.get("name") or ""
+                    part["arguments"] += function.get("arguments") or ""
+
+        calls: list[ToolCall] = []
+        for index, part in sorted(tool_parts.items()):
+            arguments = json.loads(part["arguments"] or "{}")
+            if not isinstance(arguments, dict):
+                raise TypeError("tool arguments must decode to an object")
+            calls.append(
+                ToolCall(
+                    id=part["id"] or f"call_{index}",
+                    name=part["name"],
+                    arguments=arguments,
+                )
+            )
+        yield ModelStreamEvent(
+            response=ModelResponse(
+                Message(
+                    role="assistant",
+                    content="".join(content_parts),
+                    tool_calls=tuple(calls),
+                    reasoning_content="".join(reasoning_parts),
+                ),
+                finish_reason,
+                usage,
+            )
+        )
+    except Exception as exc:
+        raise ProviderError(f"{platform} streaming request failed: {exc}") from exc

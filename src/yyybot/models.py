@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Sequence
+from collections.abc import AsyncIterator, Sequence
 
-from .contracts import GenerationOptions, Message, ModelResponse, ToolSpec
+from .contracts import (
+    GenerationOptions,
+    Message,
+    ModelResponse,
+    ModelStreamEvent,
+    ToolSpec,
+)
 from .providers.base import Provider
 
 
@@ -36,3 +42,16 @@ class Model:
             tools=tools,
             options=self.options,
         )
+
+    async def stream(
+        self,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[ModelStreamEvent]:
+        async for event in self.provider.stream(
+            model_id=self.model_id,
+            messages=messages,
+            tools=tools,
+            options=self.options,
+        ):
+            yield event

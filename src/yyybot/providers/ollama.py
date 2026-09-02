@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import Any
 
-from ..contracts import GenerationOptions, Message, ModelResponse, ToolSpec
-from ._openai import complete_with_client, create_client
+from ..contracts import (
+    GenerationOptions,
+    Message,
+    ModelResponse,
+    ModelStreamEvent,
+    ToolSpec,
+)
+from ._openai import complete_with_client, create_client, stream_with_client
 from .base import Provider
 
 
@@ -47,3 +54,21 @@ class OllamaProvider(Provider):
             tools=tools,
             options=options,
         )
+
+    async def stream(
+        self,
+        *,
+        model_id: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+        options: GenerationOptions | None = None,
+    ) -> AsyncIterator[ModelStreamEvent]:
+        async for event in stream_with_client(
+            client=self.client,
+            platform=self.platform,
+            model_id=model_id,
+            messages=messages,
+            tools=tools,
+            options=options,
+        ):
+            yield event

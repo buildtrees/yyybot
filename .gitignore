@@ -3,6 +3,10 @@ __pycache__/
 .pytest_cache/
 .venv/
 dist/
+node_modules/
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
 build/
 *.egg-info/
 .env

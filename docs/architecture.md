@@ -3,28 +3,66 @@
 ## 核心关系
 
 ```text
-CLI / Future API / Future UI
-             │
-             ▼
-           Agent ─────────► Model ─────────► Platform Provider
-             │                │                    │
-             ▼                │                    ▼
-        ToolRegistry          │              Platform SDK
-             │                │                    │
-             ▼                └── model_id ────────┘
-       User Tool Functions                         │
-                                                   ▼
-                                              Actual Model
+React UI ──HTTP/SSE──► FastAPI ──┐
+                                 ├──► ChatService
+CLI ─────────────────────────────┘         │
+                                          │ workspace_id / session_id
+                                          ▼
+                                  WorkspaceManager ──────► Workspace
+                                     │ sessions/
+                                     ▼
+                              SessionManager ─────► Per-session JSONL
+                                     │
+                                     ▼
+                           ConversationContext
+                                     │ messages
+                                     ▼
+                                   Agent ─────────► Model ─────────► Platform Provider
+                                     │                │                    │
+                                     ▼                │                    ▼
+                                ToolRegistry          │              Platform SDK
+                                     │                │                    │
+                                     ▼                └── model_id ────────┘
+                               User Tool Functions                         │
+                                                                           ▼
+                                                                      Actual Model
 ```
 
 职责边界：
 
+- `WorkspaceManager` 负责 `~/.yyybot/workspaces` 下 Workspace 的创建、列出和加载；
+- `ChatService` 是 CLI/API 共用的应用服务，协调 Workspace、Session、Context 和 Agent，并串行化同一 Session 的运行；
+- `FastAPI` 暴露 Workspace/Session REST API，把 `AgentEvent` 和最终 `AgentResult` 通过 SSE 推送给 React UI；
+- `Workspace` 是会话、文件、知识库和未来工具配置的数据隔离边界；
+- `SessionManager` 负责创建、列出和加载会话，并把成功的运行按 turn 追加到独立 JSONL 文件；
+- `ConversationContext` 负责 system prompt、已加载历史和当前输入的内存组装；
 - `Agent` 负责消息循环、工具执行和终止条件；
 - `Model` 负责绑定 `model_id`、生成参数和一个平台 Provider；
 - 平台 Provider 负责对应 SDK、凭据、地址、请求映射、响应映射和错误归一化；
 - SDK 的协议对象不泄漏到 Model、Agent 或 Tool 层。
 
 没有独立的 Protocol 或 Transport 领域层。HTTP、SDK 类型和各平台协议都是 Provider 内部实现细节。
+
+## Web 请求与事件流
+
+```text
+React UI
+  │ POST /runs {prompt}
+  ▼
+FastAPI ──► RunRegistry ──► 后台 ChatService.run()
+  ▲                              │
+  │ SSE model_start/model_delta  │ AgentEvent
+  │     model_end/tool events ◄──┘
+  │     final / error
+  └──────────────────────────────
+```
+
+`RunRegistry` 在进程内保存最近的运行事件，SSE 客户端即使稍晚连接也会先收到
+已发生事件。运行完成后，`ChatService` 才将整轮结果追加到 JSONL；失败的运行不会
+写入半个 turn。`model_delta` 分别携带 `content` 和 `reasoning_content`，页面可以
+边生成边显示；`final` 仍返回聚合后的完整 `AgentResult`，用于校验与持久化。
+
+Web 服务默认只注册网络工具，不注册 Bash。CLI 保持本地可信入口的现有行为。
 
 ## Provider 布局
 
@@ -71,6 +109,40 @@ Model → Agent
 
 Provider 输出统一的 `ModelResponse`，因此 Agent 不需要针对 OpenAI、Anthropic、Ollama 或 vLLM 编写分支。
 
+## Workspace、会话与上下文
+
+默认目录结构：
+
+```text
+~/.yyybot/
+└── workspaces/
+    ├── default/
+    │   ├── workspace.json
+    │   └── sessions/
+    │       └── <session_id>.jsonl
+    └── <workspace_id>/
+        ├── workspace.json
+        └── sessions/
+```
+
+`WorkspaceManager` 不保存全局“当前 Workspace”。CLI 或 UI 持有选中的
+workspace ID。未来账号系统通过 membership 决定账号可以访问哪些 Workspace，
+无需改变 Session、Context 或 Agent 边界。
+
+每个 session 使用一个 `<session_id>.jsonl` 文件。第一行是带
+`schema_version` 的会话元数据，之后每一行是一次成功完成的 turn。turn
+只保存当前输入、新生成的 assistant/tool 消息以及逐轮 `ModelResponse`，不会
+重复写入之前的上下文。
+
+`SessionManager` 不保存全局“当前会话”。CLI 或 UI 持有选中的 session ID，
+选择时调用 `load()` 或 `load_context()`。这样同一个 Manager 可以安全服务多个
+独立的会话选择而不会互相污染状态，也方便未来将 JSONL 替换为
+SQLite/PostgreSQL 存储。
+
+`ChatService` 为 `(workspace_id, session_id)` 维护运行锁。两个浏览器请求同时写入
+同一 Session 时，后一个请求会在锁内重新读取最新历史，避免从同一旧快照分别生成
+并追加；不同 Session 仍可并行运行。
+
 ## 扩展规则
 
 ### 新增模型
@@ -98,6 +170,7 @@ smart = Model(model_id="large-model", provider=provider)
 ```bash
 pip install -e ".[openai]"    # OpenAI、Ollama、vLLM
 pip install -e ".[anthropic]" # Anthropic
+pip install -e ".[server]"    # FastAPI + Uvicorn
 pip install -e ".[all]"       # 全部平台
 ```
 

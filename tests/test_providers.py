@@ -20,6 +20,39 @@ class FakeCreateEndpoint:
         return self.response
 
 
+class FakeAsyncStream:
+    def __init__(self, items, final_message=None):
+        self.items = list(items)
+        self.final_message = final_message
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self.items:
+            raise StopAsyncIteration
+        return self.items.pop(0)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def get_final_message(self):
+        return self.final_message
+
+
+class FakeAnthropicEndpoint(FakeCreateEndpoint):
+    def __init__(self, response, events):
+        super().__init__(response)
+        self.events = events
+
+    def stream(self, **request):
+        self.requests.append(request)
+        return FakeAsyncStream(self.events, self.response)
+
+
 def openai_client(response):
     endpoint = FakeCreateEndpoint(response)
     return SimpleNamespace(chat=SimpleNamespace(completions=endpoint)), endpoint
@@ -169,3 +202,107 @@ def test_anthropic_provider_uses_messages_sdk_shape():
     assert response.message.content == "Checking."
     assert response.message.tool_calls[0].name == "weather"
     assert response.usage["total_tokens"] == 15
+
+
+def test_openai_compatible_stream_maps_reasoning_text_tools_and_usage():
+    chunks = [
+        {
+            "choices": [
+                {"delta": {"reasoning_content": "Think "}, "finish_reason": None}
+            ]
+        },
+        {"choices": [{"delta": {"content": "Answer."}, "finish_reason": None}]},
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {
+                                    "name": "wea",
+                                    "arguments": '{"city":',
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ]
+        },
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "function": {
+                                    "name": "ther",
+                                    "arguments": '"Shanghai"}',
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        },
+        {"choices": [], "usage": {"total_tokens": 9}},
+    ]
+    client, endpoint = openai_client(FakeAsyncStream(chunks))
+    model = Model("stream-model", OllamaProvider(client=client))
+
+    async def collect():
+        return [event async for event in model.stream([])]
+
+    events = asyncio.run(collect())
+
+    assert endpoint.requests[0]["stream"] is True
+    assert endpoint.requests[0]["stream_options"] == {"include_usage": True}
+    assert events[0].delta.reasoning_content == "Think "
+    assert events[1].delta.content == "Answer."
+    response = events[-1].response
+    assert response.message.reasoning_content == "Think "
+    assert response.message.content == "Answer."
+    assert response.message.tool_calls[0].name == "weather"
+    assert response.message.tool_calls[0].arguments == {"city": "Shanghai"}
+    assert response.usage == {"total_tokens": 9}
+
+
+def test_anthropic_stream_maps_thinking_and_text_deltas():
+    final = {
+        "content": [
+            {"type": "thinking", "thinking": "Consider.", "signature": "sig"},
+            {"type": "text", "text": "Done."},
+        ],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 2, "output_tokens": 3},
+    }
+    events = [
+        {
+            "type": "content_block_delta",
+            "delta": {"type": "thinking_delta", "thinking": "Consider."},
+        },
+        {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "Done."},
+        },
+    ]
+    endpoint = FakeAnthropicEndpoint(final, events)
+    client = SimpleNamespace(messages=endpoint)
+    model = Model("claude-stream", AnthropicProvider(client=client))
+
+    async def collect():
+        return [event async for event in model.stream([])]
+
+    streamed = asyncio.run(collect())
+
+    assert streamed[0].delta.reasoning_content == "Consider."
+    assert streamed[1].delta.content == "Done."
+    response = streamed[-1].response
+    assert response.message.reasoning_content == "Consider."
+    assert response.message.reasoning_signature == "sig"
+    assert response.message.content == "Done."
+    assert response.usage["total_tokens"] == 5

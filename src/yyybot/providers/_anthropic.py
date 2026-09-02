@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import Any
 
-from ..contracts import GenerationOptions, Message, ModelResponse, ToolCall, ToolSpec
+from ..contracts import (
+    GenerationOptions,
+    Message,
+    ModelDelta,
+    ModelResponse,
+    ModelStreamEvent,
+    ToolCall,
+    ToolSpec,
+)
 from .base import ProviderError
 
 
@@ -39,6 +48,14 @@ def _blocks(message: Message) -> list[dict[str, Any]]:
             }
         ]
     blocks: list[dict[str, Any]] = []
+    if message.reasoning_content and message.reasoning_signature:
+        blocks.append(
+            {
+                "type": "thinking",
+                "thinking": message.reasoning_content,
+                "signature": message.reasoning_signature,
+            }
+        )
     if message.content:
         blocks.append({"type": "text", "text": message.content})
     blocks.extend(
@@ -84,10 +101,16 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
 def decode_response(response: Any) -> ModelResponse:
     payload = _as_mapping(response)
     text: list[str] = []
+    reasoning: list[str] = []
+    reasoning_signature: str | None = None
     calls: list[ToolCall] = []
     for block in payload["content"]:
         if block.get("type") == "text":
             text.append(block.get("text", ""))
+        elif block.get("type") == "thinking":
+            reasoning.append(block.get("thinking", ""))
+            if isinstance(block.get("signature"), str):
+                reasoning_signature = block["signature"]
         elif block.get("type") == "tool_use":
             arguments = block.get("input") or {}
             if not isinstance(arguments, dict):
@@ -109,7 +132,13 @@ def decode_response(response: Any) -> ModelResponse:
             "output_tokens", 0
         )
     return ModelResponse(
-        Message(role="assistant", content="".join(text), tool_calls=tuple(calls)),
+        Message(
+            role="assistant",
+            content="".join(text),
+            tool_calls=tuple(calls),
+            reasoning_content="".join(reasoning),
+            reasoning_signature=reasoning_signature,
+        ),
         payload.get("stop_reason"),
         usage,
     )
@@ -128,9 +157,7 @@ def request_payload(
         **options.extra,
         "model": model_id,
         "max_tokens": (
-            options.max_tokens
-            if options.max_tokens is not None
-            else default_max_tokens
+            options.max_tokens if options.max_tokens is not None else default_max_tokens
         ),
         "messages": turns,
     }
@@ -148,3 +175,30 @@ def request_payload(
     if options.temperature is not None:
         request["temperature"] = options.temperature
     return request
+
+
+async def stream_with_client(
+    *,
+    client: Any,
+    request: Mapping[str, Any],
+) -> AsyncIterator[ModelStreamEvent]:
+    async with client.messages.stream(**request) as stream:
+        async for raw_event in stream:
+            event = _as_mapping(raw_event)
+            if event.get("type") != "content_block_delta":
+                continue
+            delta = event.get("delta") or {}
+            delta_type = delta.get("type")
+            content = delta.get("text", "") if delta_type == "text_delta" else ""
+            reasoning = (
+                delta.get("thinking", "") if delta_type == "thinking_delta" else ""
+            )
+            if content or reasoning:
+                yield ModelStreamEvent(
+                    delta=ModelDelta(
+                        content=content,
+                        reasoning_content=reasoning,
+                    )
+                )
+        final_message = await stream.get_final_message()
+        yield ModelStreamEvent(response=decode_response(final_message))
