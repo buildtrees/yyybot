@@ -14,7 +14,17 @@ dependencies = []
 openai = ["openai>=1.0"]
 anthropic = ["anthropic>=0.40"]
 web = ["ddgs>=9.5.5,<10.0.0", "httpx[socks]>=0.28.0,<1.0.0"]
-server = ["fastapi>=0.115.0,<1.0.0", "uvicorn>=0.30.0,<1.0.0"]
+server = [
+    "fastapi>=0.115.0,<1.0.0",
+    "uvicorn>=0.30.0,<1.0.0",
+    "websockets>=14.0,<16.0",
+]
+local-speech = [
+    "av>=12.0.0,<17.0.0",
+    "numpy>=1.26.0,<3.0.0",
+    "sherpa-onnx>=1.10.0,<2.0.0",
+]
+local-tts = ["qwen-tts==0.1.1"]
 all = [
     "openai>=1.0",
     "anthropic>=0.40",
@@ -22,6 +32,10 @@ all = [
     "httpx[socks]>=0.28.0,<1.0.0",
     "fastapi>=0.115.0,<1.0.0",
     "uvicorn>=0.30.0,<1.0.0",
+    "websockets>=14.0,<16.0",
+    "av>=12.0.0,<17.0.0",
+    "numpy>=1.26.0,<3.0.0",
+    "sherpa-onnx>=1.10.0,<2.0.0",
 ]
 
 [project.scripts]

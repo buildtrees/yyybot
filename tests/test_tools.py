@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +29,20 @@ def test_sync_and_async_tools_share_one_interface():
     assert sync.spec.parameters["properties"]["value"]["type"] == "integer"
     assert asyncio.run(registry.execute(ToolCall("1", "sync_tool", {"value": 2}))) == 4
     assert asyncio.run(registry.execute(ToolCall("2", "async_tool", {"value": 2}))) == 6
+
+
+def test_slow_sync_tool_returns_after_worker_thread_finishes():
+    registry = ToolRegistry()
+
+    def slow_tool() -> str:
+        """Return after enough time for the event loop to enter its wait cycle."""
+
+        time.sleep(0.05)
+        return "done"
+
+    registry.add(slow_tool)
+
+    assert asyncio.run(registry.execute(ToolCall("1", "slow_tool", {}))) == "done"
 
 
 def test_web_search_uses_ddgs_and_formats_results(monkeypatch):

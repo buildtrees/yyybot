@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import BinaryIO
 
+from .execution import current_execution_directory
 from .tools import ToolError
 
 _DEFAULT_TIMEOUT = 30
@@ -109,5 +110,5 @@ async def bash(command: str, timeout: int = _DEFAULT_TIMEOUT) -> str:
     if not command.strip():
         raise ToolError("Bash command cannot be empty")
     timeout = min(max(timeout, 1), _MAX_TIMEOUT)
-    result = await _run_bash(command, timeout, Path.cwd())
+    result = await _run_bash(command, timeout, current_execution_directory())
     return json.dumps(result, ensure_ascii=False)

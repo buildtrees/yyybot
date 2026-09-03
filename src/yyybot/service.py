@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from .agent import Agent, EventHandler
 from .context import ConversationContext
 from .contracts import AgentResult, Message
+from .execution import use_execution_directory
 from .session import Session, SessionManager
 from .workspace import Workspace, WorkspaceManager, WorkspaceType
 
@@ -105,7 +106,8 @@ class ChatService:
     ) -> AgentResult:
         lock = await self._session_lock(workspace_id, session_id)
         async with lock:
-            sessions = self.session_manager(workspace_id)
+            workspace = self.get_workspace(workspace_id)
+            sessions = SessionManager(workspace.sessions_directory)
             session = sessions.load(session_id)
             current = tuple(
                 (Message(role="user", content=prompt),)
@@ -118,6 +120,7 @@ class ChatService:
             )
             messages = context.build(*current)
             agent: Agent = self._agent_factory(on_event)
-            result = await agent.run(messages)
+            with use_execution_directory(workspace.directory):
+                result = await agent.run(messages)
             sessions.append_turn(session_id, incoming=current, result=result)
             return result

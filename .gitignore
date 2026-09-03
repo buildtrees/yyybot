@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.venv311/
+.vendor/
 dist/
 node_modules/
 *.tsbuildinfo
@@ -10,3 +12,11 @@ web/vite.config.d.ts
 build/
 *.egg-info/
 .env
+.models/
+*.ckpt
+*.gguf
+*.onnx
+*.pt
+*.pth
+*.safetensors
+pytorch_model*.bin

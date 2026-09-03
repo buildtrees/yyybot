@@ -4,6 +4,7 @@ import asyncio
 import json
 
 from yyybot import ToolRegistry, bash
+from yyybot.execution import use_execution_directory
 
 
 def test_bash_returns_stdout_stderr_and_exit_code():
@@ -42,3 +43,11 @@ def test_bash_registers_with_expected_schema():
         },
         "required": ["command"],
     }
+
+
+def test_bash_uses_task_local_execution_directory(tmp_path):
+    with use_execution_directory(tmp_path):
+        result = json.loads(asyncio.run(bash("pwd")))
+
+    assert result["cwd"] == str(tmp_path)
+    assert result["stdout"].strip() == str(tmp_path)

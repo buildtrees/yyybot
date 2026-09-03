@@ -28,11 +28,24 @@ CLI ─────────────────────────�
                                                                       Actual Model
 ```
 
+语音是交互层适配能力，不进入 Agent 的消息协议：
+
+```text
+浏览器麦克风 ──原始音频──► SpeechService ──STT──► prompt
+                                                     │
+                                                     ▼
+                                              原有 ChatService/Agent
+                                                     │ final text
+                                                     ▼
+浏览器播放器 ◄────音频──── SpeechService ◄──TTS──────┘
+```
+
 职责边界：
 
 - `WorkspaceManager` 负责 `~/.yyybot/workspaces` 下 Workspace 的创建、列出和加载；
 - `ChatService` 是 CLI/API 共用的应用服务，协调 Workspace、Session、Context 和 Agent，并串行化同一 Session 的运行；
 - `FastAPI` 暴露 Workspace/Session REST API，把 `AgentEvent` 和最终 `AgentResult` 通过 SSE 推送给 React UI；
+- `SpeechService` 在 Agent 外部协调可独立替换的语音转写和语音合成 Provider；
 - `Workspace` 是会话、文件、知识库和未来工具配置的数据隔离边界；
 - `SessionManager` 负责创建、列出和加载会话，并把成功的运行按 turn 追加到独立 JSONL 文件；
 - `ConversationContext` 负责 system prompt、已加载历史和当前输入的内存组装；
@@ -62,7 +75,8 @@ FastAPI ──► RunRegistry ──► 后台 ChatService.run()
 写入半个 turn。`model_delta` 分别携带 `content` 和 `reasoning_content`，页面可以
 边生成边显示；`final` 仍返回聚合后的完整 `AgentResult`，用于校验与持久化。
 
-Web 服务默认只注册网络工具，不注册 Bash。CLI 保持本地可信入口的现有行为。
+Web 服务默认注册网络工具和 Bash；可通过 `YYYBOT_ENABLE_BASH=0` 显式关闭
+Web 入口的 Bash。CLI 保持本地可信入口的现有行为。
 
 ## Provider 布局
 
@@ -109,6 +123,20 @@ Model → Agent
 
 Provider 输出统一的 `ModelResponse`，因此 Agent 不需要针对 OpenAI、Anthropic、Ollama 或 vLLM 编写分支。
 
+## 语音适配层
+
+`SpeechService` 与 `ChatService` 平行。`POST /api/audio/transcriptions` 接收浏览器录制
+的原始音频并只返回转写文本；前端将文本放入输入框，用户确认后仍调用原来的
+`POST /runs`。`POST /api/audio/speech` 提供整段音频兼容接口，音色列表与流式能力由
+`GET /api/audio/config` 提供。支持原生流式的 Provider 还通过
+`/api/audio/speech/stream` 建立 WebSocket：客户端连续发送 `text` 消息并以 `end`
+结束输入，服务端返回 PCM16 二进制音频块。这样 LLM 文本增量和 TTS 音频增量可以
+在同一合成会话内流水执行。
+
+语音 Provider 不实现模型 `Provider`，也不扩展 `Message` 的音频字段。Session 继续
+只持久化用户确认后的文字和 Agent 输出文字，因此切换 STT/TTS 平台不会改变 Agent
+上下文、工具调用或 JSONL 格式。
+
 ## Workspace、会话与上下文
 
 默认目录结构：
@@ -142,6 +170,10 @@ SQLite/PostgreSQL 存储。
 `ChatService` 为 `(workspace_id, session_id)` 维护运行锁。两个浏览器请求同时写入
 同一 Session 时，后一个请求会在锁内重新读取最新历史，避免从同一旧快照分别生成
 并追加；不同 Session 仍可并行运行。
+
+持久 Session 调用 Agent 时，`ChatService` 还会把工具执行目录绑定为对应的
+Workspace 根目录。该绑定基于 `ContextVar`，因此不会调用全局 `os.chdir()`，不同
+Workspace 的并发 Bash 调用也不会互相串目录。
 
 ## 扩展规则
 

@@ -24,6 +24,21 @@ from .session import (
     SessionTurn,
 )
 from .service import ChatService
+from .speech import (
+    CosyVoiceSpeechSynthesizer,
+    OpenAISpeechProvider,
+    Qwen3SpeechSynthesizer,
+    SherpaSpeechTranscriber,
+    SpeechAudio,
+    SpeechChunk,
+    SpeechError,
+    SpeechProviderError,
+    SpeechService,
+    SpeechUnavailableError,
+    TranscriptionProvider,
+    Voice,
+    VoiceSynthesisProvider,
+)
 from .terminal import bash
 from .tools import Tool, ToolRegistry
 from .web import web_fetch, web_search
@@ -44,6 +59,7 @@ __all__ = [
     "bash",
     "ChatService",
     "ConversationContext",
+    "CosyVoiceSpeechSynthesizer",
     "GenerationOptions",
     "Message",
     "Model",
@@ -57,10 +73,22 @@ __all__ = [
     "SessionManager",
     "SessionNotFoundError",
     "SessionTurn",
+    "OpenAISpeechProvider",
+    "Qwen3SpeechSynthesizer",
+    "SherpaSpeechTranscriber",
+    "SpeechAudio",
+    "SpeechChunk",
+    "SpeechError",
+    "SpeechProviderError",
+    "SpeechService",
+    "SpeechUnavailableError",
     "Tool",
     "ToolCall",
     "ToolRegistry",
     "ToolSpec",
+    "TranscriptionProvider",
+    "Voice",
+    "VoiceSynthesisProvider",
     "web_fetch",
     "web_search",
     "Workspace",
